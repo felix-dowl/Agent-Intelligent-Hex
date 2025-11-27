@@ -28,7 +28,22 @@ class MyPlayer(PlayerHex):
     def compute_action(self, current_state: GameState, remaining_time: int = 1e9, **kwargs) -> Action:
         """
         Picks a action using minimax with alpha-beta pruning, with depth limiter right now.
+        Has a first move heuristic to take a center piece on the first move.
         """
+        env = current_state.get_rep().get_env()
+        actions = tuple(current_state.get_possible_light_actions())
+        step = current_state.get_step() if hasattr(current_state, "get_step") else len(env)
+        dim = current_state.get_rep().get_dimensions()[0]
+        center_candidates = [
+            (dim//2 - 1, dim//2 - 1), (dim//2 - 1, dim//2),
+            (dim//2, dim//2 - 1), (dim//2, dim//2)
+        ]
+        # opening heuristics, play in center
+        if step == 0 or step == 1:
+            for act in actions:
+                pos = act.data.get("position")
+                if pos in center_candidates and pos not in env:
+                    return act
         depth = 2  # to be changed for dynamic with time ad with goodness of move
         score, action = self.maxAction(current_state, depth, -inf, inf)
         if action is None:
@@ -79,32 +94,6 @@ class MyPlayer(PlayerHex):
                 if best_value <= alpha:
                     break
         return best_value, best_action
-
-    #def (self, state: GameStateHex) -> float:
-    #     my_id, opp_id = self._resolve_player_ids(state)
-    #     my_score = state.scores.get(my_id, 0)
-    #     opp_score = state.scores.get(opp_id, 0)
-    #     if my_score > opp_score:
-    #         return 1e6
-    #     if opp_score > my_score:
-    #         return -1e6
-
-    #     env = state.get_rep().get_env()
-    #     dims = state.get_rep().get_dimensions()
-    #     max_dist = dims[0] + dims[1]
-
-    #     piece_advantage = 0
-    #     center_score = 0.0
-    #     for (i, j), piece in env.items():
-    #         value = max_dist - (abs(i - (dims[0] - 1) / 2) + abs(j - (dims[1] - 1) / 2))
-    #         if piece.get_type() == self.piece_type:
-    #             piece_advantage += 1
-    #             center_score += value
-    #         else:
-    #             piece_advantage -= 1
-    #             center_score -= value
-
-    #     return piece_advantage * 5 + center_score
 
     def evaluate_state(self, state: GameState) -> float:
         my_id, opp_id = self._find_player_ids(state)
