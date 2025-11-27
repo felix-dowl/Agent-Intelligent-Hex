@@ -178,18 +178,17 @@ class MyPlayer(PlayerHex):
                     heapq.heappush(heap, (nd, npos))
 
             # Bridges: oXo pattern where it is technically unblockable
-            # Set to a low weight of 0.3 cause its not fully connected yet but better than empty cells
+            # Set to a low weight of 0.5 cause its not fully connected yet but better than empty cells
+            # ref: left: (0, -1), right (0, 1), up-left: (-1, 0), up-right: (-1, 1), down-left: (1, -1), down-right: (1, 0)
             piece_here = env.get(pos)
             if piece_here is not None and piece_here.get_type() == piece_type:
-                bridge_patterns = [ # tuple -> ( (coord de la node target), [coords des nodes entre les deux cellules])
-                    ((1, 1), [(0, 1), (1, 0)]),
-                    ((1, -1), [(0, -1), (1, 0)]),
-                    ((-1, 1), [(-1, 0), (0, 1)]),
-                    ((-1, -1), [(-1, 0), (0, -1)]),
-                    ((2, -1), [(1, 0), (1, -1)]),
-                    ((-2, 1), [(-1, 0), (-1, 1)]),
-                    ((1, 2), [(0, 1), (1, 1)]),
-                    ((-1, -2), [(-1, -1), (0, -1)]),
+                bridge_patterns = [ # tuple -> (target coord), [coords of the two intermediate cells]
+                    ((-2, 1), [(-1, 0), (-1, 1)]), # up above : up left and up right 
+                    ((-1, -1), [(-1, 0), (0, -1)]), # upper left: up left and left
+                    ((-1, 2), [(-1, 1), (0, 1)]), # upper right: up right and right
+                    ((1, -2), [(0, -1), (1, -1)]), # lower left: down left and left
+                    ((1, 1), [(0, 1), (1, 0)]), # lower right: down right and right
+                    ((2, -1), [(1, 0), (1, -1)]), # down: down right + down left
                 ]
                 for (dr, dc), mids in bridge_patterns:
                     tpos = (pos[0] + dr, pos[1] + dc)
@@ -200,7 +199,7 @@ class MyPlayer(PlayerHex):
                         continue
                     if any(env.get((pos[0] + mr, pos[1] + mc)) is not None for mr, mc in mids):
                         continue
-                    nd = d + 0.3 
+                    nd = d + 0.5 
                     if nd < dist.get(tpos, inf):
                         dist[tpos] = nd
                         heapq.heappush(heap, (nd, tpos))
