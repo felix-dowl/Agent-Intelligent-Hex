@@ -122,6 +122,8 @@ class MyPlayer(PlayerHex):
         """
         Djikstra shortest-path algorithm between the two sides.
         Own stones cost 0, empty cells cost 1, opponent stones cost infinity.
+        Also usues a pattern search to find a certain unblockable bridge pattern. -> oXo shape
+        To add : possibly a way to prioritise the middle control in early game?
         """
         player = state.get_player_id(pid)
         if player is None:
@@ -175,11 +177,11 @@ class MyPlayer(PlayerHex):
                     dist[npos] = nd
                     heapq.heappush(heap, (nd, npos))
 
-            # Bridge edges: link two of our stones with a low-cost edge when both
-            # intermediate "diamond" cells are empty (unblockable by one move).
+            # Bridges: oXo pattern where it is technically unblockable
+            # Set to a low weight of 0.3 cause its not fully connected yet but better than empty cells
             piece_here = env.get(pos)
             if piece_here is not None and piece_here.get_type() == piece_type:
-                bridge_patterns = [
+                bridge_patterns = [ # tuple -> ( (coord de la node target), [coords des nodes entre les deux cellules])
                     ((1, 1), [(0, 1), (1, 0)]),
                     ((1, -1), [(0, -1), (1, 0)]),
                     ((-1, 1), [(-1, 0), (0, 1)]),
@@ -198,7 +200,7 @@ class MyPlayer(PlayerHex):
                         continue
                     if any(env.get((pos[0] + mr, pos[1] + mc)) is not None for mr, mc in mids):
                         continue
-                    nd = d + 0.5  # cheaper than two empties, more than free
+                    nd = d + 0.3 
                     if nd < dist.get(tpos, inf):
                         dist[tpos] = nd
                         heapq.heappush(heap, (nd, tpos))
