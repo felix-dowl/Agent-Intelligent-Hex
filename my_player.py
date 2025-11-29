@@ -18,7 +18,7 @@ BRIDGE_PATTERNS = [ # tuple -> (target coord), [coords of the two intermediate c
 ]
 
 INITIAL_NODES_EXPLORED = 20
-BASE_CLIPPING_DEPTH = 1
+BASE_CLIPPING_DEPTH = 2
 EARLY_CLIPPING_DEPTH = 1
 MAX_DEPTH = 5
 MIDGAME_DEPTH = 3
@@ -91,6 +91,8 @@ class MyPlayer(PlayerHex):
 
         #Run minimax implementation
         score, action = self.maxAction(current_state, depth, clipping_depth, -inf, inf, start_time, remaining_time)
+        if self._time_remaining(start_time, remaining_time) <= THIRTY_SEC:
+            return self._panic_action(current_state, actions)
         if action is None:
             possible_actions = tuple(current_state.get_possible_light_actions())
             if not possible_actions:
@@ -100,7 +102,7 @@ class MyPlayer(PlayerHex):
 
     def maxAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float, start_time: float, total_time: float) -> tuple[float, Action | None]:
         if self._time_remaining(start_time, total_time) <= THIRTY_SEC:
-            return self.evaluate_state(current_state), None
+            return inf, None
         if depth <= 0 or current_state.is_done():
             return self.evaluate_state(current_state), None
 
@@ -125,7 +127,7 @@ class MyPlayer(PlayerHex):
 
     def minAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float, start_time: float, total_time: float) -> tuple[float, Action | None]:
         if self._time_remaining(start_time, total_time) <= THIRTY_SEC:
-            return self.evaluate_state(current_state), None
+            return -inf, None
         if depth <= 0 or current_state.is_done():
             return self.evaluate_state(current_state), None
 
