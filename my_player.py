@@ -1,5 +1,6 @@
 from math import inf
 import heapq
+import time
 
 from player_hex import PlayerHex
 from seahorse.game.action import Action
@@ -17,10 +18,10 @@ BRIDGE_PATTERNS = [ # tuple -> (target coord), [coords of the two intermediate c
 ]
 
 INITIAL_NODES_EXPLORED = 20
-BASE_CLIPPING_DEPTH = 2
+BASE_CLIPPING_DEPTH = 1
 EARLY_CLIPPING_DEPTH = 1
 MAX_DEPTH = 5
-MIDGAME_DEPTH = 4
+MIDGAME_DEPTH = 3
 LOW_TIME_DEPTH = 3
 EARLY_DEPTH = 2
 THIRTY_SEC = 30
@@ -50,6 +51,7 @@ class MyPlayer(PlayerHex):
         Picks a action using minimax with alpha-beta pruning, with depth limiter right now.
         Has a first move heuristic to take a center piece on the first move.
         """
+        start_time = time.perf_counter()
         env = current_state.get_rep().get_env()
         actions = tuple(current_state.get_possible_light_actions())
         step = current_state.get_step() if hasattr(current_state, "get_step") else len(env)
@@ -88,7 +90,7 @@ class MyPlayer(PlayerHex):
             depth = LOW_TIME_DEPTH
 
         #Run minimax implementation
-        score, action = self.maxAction(current_state, depth, clipping_depth, -inf, inf)
+        score, action = self.maxAction(current_state, depth, clipping_depth, -inf, inf, start_time, remaining_time)
         if action is None:
             possible_actions = tuple(current_state.get_possible_light_actions())
             if not possible_actions:
@@ -96,7 +98,9 @@ class MyPlayer(PlayerHex):
             return possible_actions[0]
         return action
 
-    def maxAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float) -> tuple[float, Action | None]:
+    def maxAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float, start_time: float, total_time: float) -> tuple[float, Action | None]:
+        if self._time_remaining(start_time, total_time) <= THIRTY_SEC:
+            return self.evaluate_state(current_state), None
         if depth <= 0 or current_state.is_done():
             return self.evaluate_state(current_state), None
 
@@ -110,7 +114,7 @@ class MyPlayer(PlayerHex):
         best_action = None
         for action in ordered_actions:
             child_state = current_state.apply_action(action)
-            value, _ = self.minAction(child_state, depth - 1, clipping_depth, alpha, beta)
+            value, _ = self.minAction(child_state, depth - 1, clipping_depth, alpha, beta, start_time, total_time)
             if value > best_value:
                 best_value = value
                 best_action = action
@@ -119,7 +123,9 @@ class MyPlayer(PlayerHex):
                     break
         return best_value, best_action
 
-    def minAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float) -> tuple[float, Action | None]:
+    def minAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float, start_time: float, total_time: float) -> tuple[float, Action | None]:
+        if self._time_remaining(start_time, total_time) <= THIRTY_SEC:
+            return self.evaluate_state(current_state), None
         if depth <= 0 or current_state.is_done():
             return self.evaluate_state(current_state), None
 
@@ -133,7 +139,7 @@ class MyPlayer(PlayerHex):
         best_action = None
         for action in ordered_actions:
             child_state = current_state.apply_action(action)
-            value, _ = self.maxAction(child_state, depth - 1, clipping_depth, alpha, beta)
+            value, _ = self.maxAction(child_state, depth - 1, clipping_depth, alpha, beta, start_time, total_time)
             if value < best_value:
                 best_value = value
                 best_action = action
@@ -346,6 +352,9 @@ class MyPlayer(PlayerHex):
             seen_positions.add(pos)
 
         return ordered
+
+    def _time_remaining(self, start_time: float, total_time: float) -> float:
+        return total_time - (time.perf_counter() - start_time)
 
     # returns the tuple [my_id, opp_id]
     def _find_player_ids(self, state: GameState) -> tuple[int, int]:
