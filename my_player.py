@@ -17,7 +17,8 @@ BRIDGE_PATTERNS = [ # tuple -> (target coord), [coords of the two intermediate c
     ((2, -1), [(1, 0), (1, -1)]), # down: down right + down left
 ]
 
-INITIAL_NODES_EXPLORED = 20
+HEAVY_ORDERING_ACTIONS_EXPLORED = 20
+LIGHT_ORDERING_ACTIONS_EXPLORED = 60
 BASE_CLIPPING_DEPTH = 2
 EARLY_CLIPPING_DEPTH = 2
 ENDGAME_CLIPPING_DEPTH = 1
@@ -26,6 +27,7 @@ MIDGAME_DEPTH = 3
 ENDGAME_DEPTH = 2
 LOW_TIME_DEPTH = 3
 EARLY_DEPTH = 4
+EARLY_RADIUS = 3
 THIRTY_SEC = 30
 SIXTY_SEC = 60
 THREE_MIN = 180
@@ -87,13 +89,6 @@ class MyPlayer(PlayerHex):
         elif 12 <= my_piece_count:
             depth = ENDGAME_DEPTH
             clipping_depth = ENDGAME_CLIPPING_DEPTH
-
-        # Time-aware depth adjustments.
-        if remaining_time <= SIXTY_SEC:
-            depth = EARLY_DEPTH
-            clipping_depth = EARLY_CLIPPING_DEPTH
-        elif remaining_time <= THREE_MIN:
-            depth = LOW_TIME_DEPTH
 
         #Run minimax implementation
         score, action = self.maxAction(current_state, depth, clipping_depth, -inf, inf, start_time, remaining_time)
@@ -314,13 +309,28 @@ class MyPlayer(PlayerHex):
                 best_action = action
         return best_action
 
-    def _order_actions(self, current_state: GameState, actions: tuple[Action, ...], depth: int, clipping_depth: int) -> list[Action]:
+    def _order_actions(self, current_state: GameState, actions: tuple[Action, ...], depth: int, heavy_ordering_depth: int) -> list[Action]:
         """
         Orders actions by a heuristic score and injects bridge defenses into the shortlist.
         """
-        if depth < clipping_depth:
-            return list(actions)
+        dim = current_state.get_rep().get_dimensions()[0]
+        if (current_state.get_step()) < 8:
+            center_radius = EARLY_RADIUS
+            center_row = dim // 2
+            center_col = dim // 2
+            center_actions = [
+                a for a in actions
+                if abs(a.data["position"][0] - center_row) <= center_radius
+                and abs(a.data["position"][1] - center_col) <= center_radius
+            ]
+            if center_actions:
+                actions = tuple(center_actions)
+        if depth >= heavy_ordering_depth:
+            return self._heavy_ordering(current_state, actions)
+        else:
+            return self._light_ordering(current_state, actions)
 
+    def _heavy_ordering(self, current_state: GameState, actions: tuple[Action, ...]):
         my_id, opp_id = self._find_player_ids(current_state)
         my_before = self._shortest_path_cost(current_state, my_id)
         opp_before = self._shortest_path_cost(current_state, opp_id) if opp_id is not None else inf
@@ -340,25 +350,23 @@ class MyPlayer(PlayerHex):
             if opp_before < inf and opp_after < inf:
                 delta += opp_after - opp_before
 
-            # Early-game center bias: prefer moves closer to the board center and away from edges.
             if early_game:
                 pos = action.data.get("position")
                 if pos:
                     dist_center = abs(pos[0] - center[0]) + abs(pos[1] - center[1])
                     edge_distance = min(pos[0], pos[1], dim - 1 - pos[0], dim - 1 - pos[1])
-                    delta += 0.2 * (-dist_center)  # closer to center is better
+                    delta += 0.2 * (-dist_center)
                     if edge_distance == 0:
-                        delta -= 1.0  # light penalty for playing on the edge very early
+                        delta -= 1.0 
 
             scored.append((delta, action))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        k = min(INITIAL_NODES_EXPLORED, len(scored))
+        k = min(HEAVY_ORDERING_ACTIONS_EXPLORED, len(scored))
         top_actions = [a for _, a in scored[:k]]
 
-        # Make sure bridge defenses are explored even if they fall outside the top-k.
-        move_piece = actions[0].data.get("piece") if actions else None
-        defense_positions = self._bridge_defenses(current_state, move_piece) if move_piece else []
+         # Make sure bridge defenses are explored even if they fall outside the top-k.
+        defense_positions = self._bridge_defenses(current_state, self.piece_type)
         if not defense_positions:
             return top_actions
 
@@ -375,6 +383,72 @@ class MyPlayer(PlayerHex):
             seen_positions.add(pos)
 
         return ordered
+            
+   
+    def _light_ordering(self, current_state: GameState, actions: tuple[Action, ...]) -> list[Action]:
+        """
+        Cheaper ordering: prioritize local connectivity and blocking potential enemy bridges.
+        """
+        if not actions:
+            return []
+
+        env = current_state.get_rep().get_env()
+        dim = current_state.get_rep().get_dimensions()[0]
+        enemy_type = "R" if self.piece_type == "B" else "B"
+        # Empty cells that would complete an enemy bridge if they play there.
+        enemy_bridge_targets = set(self._bridge_defenses(current_state, enemy_type))
+        # Empty cells that would block a future enemy bridge (both mids empty and target not blocked).
+        potential_bridge_blocks: set[tuple[int, int]] = set()
+        # Empty cells that would complete or support our bridge.
+        my_bridge_targets = set(self._bridge_defenses(current_state, self.piece_type))
+        # Empty cells that sit inside an already-formed enemy bridge (both ends enemy, mids empty).
+        existing_enemy_bridge_cells: set[tuple[int, int]] = set()
+
+        for (i, j), piece in env.items():
+            if piece.get_type() != enemy_type:
+                continue
+            for (dr, dc), mids in BRIDGE_PATTERNS:
+                target = (i + dr, j + dc)
+                if not current_state.in_board(target):
+                    continue
+                target_piece = env.get(target)
+                if target_piece is not None and target_piece.get_type() != enemy_type:
+                    continue
+                mid_positions = [(i + mr, j + mc) for mr, mc in mids]
+                if any(not current_state.in_board(mid) for mid in mid_positions):
+                    continue
+                mids_empty = [env.get(mid) is None for mid in mid_positions]
+                if all(mids_empty):
+                    potential_bridge_blocks.update(mid_positions)
+                elif all((env.get(mid) is None or env.get(mid).get_type() == enemy_type) for mid in mid_positions):
+                    existing_enemy_bridge_cells.update(mid_positions)
+
+        scored: list[tuple[float, Action]] = []
+        for action in actions:
+            pos = action.data["position"]
+            neighbours = current_state.get_neighbours(*pos).values()
+            my_adj = sum(1 for t, _ in neighbours if t == self.piece_type)
+            opp_adj = sum(1 for t, _ in neighbours if t == enemy_type)
+
+            score = 2.0 * my_adj + 1.0 * opp_adj
+            # Bonus for occupying a cell that would allow the enemy to form a bridge.
+            if pos in enemy_bridge_targets:
+                score += 2.0
+            # Bonus for preemptively blocking an empty bridge midpoint.
+            if pos in potential_bridge_blocks:
+                score += 1.5
+            # Smaller bonus for completing our own bridge.
+            if pos in my_bridge_targets:
+                score += 1.0
+            # Discourage filling the gap of an already-formed enemy bridge.
+            if pos in existing_enemy_bridge_cells:
+                score -= 5.0
+
+            scored.append((score, action))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        k = min(LIGHT_ORDERING_ACTIONS_EXPLORED, len(scored))
+        return [a for _, a in scored[:k]]
 
     def _time_remaining(self, start_time: float, total_time: float) -> float:
         return total_time - (time.perf_counter() - start_time)
