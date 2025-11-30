@@ -19,13 +19,11 @@ BRIDGE_PATTERNS = [ # tuple -> (target coord), [coords of the two intermediate c
 
 INITIAL_NODES_EXPLORED = 20
 BASE_CLIPPING_DEPTH = 2
-EARLY_CLIPPING_DEPTH = 2
-ENDGAME_CLIPPING_DEPTH = 1
+EARLY_CLIPPING_DEPTH = 1
 MAX_DEPTH = 5
 MIDGAME_DEPTH = 3
-ENDGAME_DEPTH = 2
 LOW_TIME_DEPTH = 3
-EARLY_DEPTH = 4
+EARLY_DEPTH = 2
 THIRTY_SEC = 30
 SIXTY_SEC = 60
 THREE_MIN = 180
@@ -79,14 +77,10 @@ class MyPlayer(PlayerHex):
             return self._panic_action(current_state, actions)
 
 
-        # Early-game depth limiting: after our first move, next 3 are critical, so we explore deeply
-        #Endgame depth: match usually already determined. REduce depth to save time.
+        # Early-game depth limiting: after our first move, next three moves search shallow
         if 1 <= my_piece_count <= 3:
             depth = EARLY_DEPTH
             clipping_depth = EARLY_CLIPPING_DEPTH
-        elif 12 <= my_piece_count:
-            depth = ENDGAME_DEPTH
-            clipping_depth = ENDGAME_CLIPPING_DEPTH
 
         # Time-aware depth adjustments.
         if remaining_time <= SIXTY_SEC:
@@ -159,7 +153,7 @@ class MyPlayer(PlayerHex):
     def evaluate_state(self, state: GameState) -> float:
         my_id, opp_id = self._find_player_ids(state)
         if state.is_done():
-            return 1e9 * (state.scores.get(my_id, 0.0) - state.scores.get(opp_id, 0.0))
+            return 1e6 * (state.scores.get(my_id, 0.0) - state.scores.get(opp_id, 0.0))
 
         my_cost = self._shortest_path_cost(state, my_id)
         opp_cost = self._shortest_path_cost(state, opp_id) if opp_id is not None else inf
@@ -326,10 +320,6 @@ class MyPlayer(PlayerHex):
         opp_before = self._shortest_path_cost(current_state, opp_id) if opp_id is not None else inf
 
         scored: list[tuple[float, Action]] = []
-        dim = current_state.get_rep().get_dimensions()[0]
-        center = (dim / 2.0 - 0.5, dim / 2.0 - 0.5)
-        early_game = current_state.get_step() < 8
-
         for action in actions:
             child_state = current_state.apply_action(action)
             my_after = self._shortest_path_cost(child_state, my_id)
@@ -339,17 +329,6 @@ class MyPlayer(PlayerHex):
                 delta += my_before - my_after
             if opp_before < inf and opp_after < inf:
                 delta += opp_after - opp_before
-
-            # Early-game center bias: prefer moves closer to the board center and away from edges.
-            if early_game:
-                pos = action.data.get("position")
-                if pos:
-                    dist_center = abs(pos[0] - center[0]) + abs(pos[1] - center[1])
-                    edge_distance = min(pos[0], pos[1], dim - 1 - pos[0], dim - 1 - pos[1])
-                    delta += 0.2 * (-dist_center)  # closer to center is better
-                    if edge_distance == 0:
-                        delta -= 1.0  # light penalty for playing on the edge very early
-
             scored.append((delta, action))
 
         scored.sort(key=lambda x: x[0], reverse=True)
