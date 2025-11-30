@@ -334,6 +334,7 @@ class MyPlayer(PlayerHex):
         my_id, opp_id = self._find_player_ids(current_state)
         my_before = self._shortest_path_cost(current_state, my_id)
         opp_before = self._shortest_path_cost(current_state, opp_id) if opp_id is not None else inf
+        my_labels, my_components_before = self._component_labels(current_state, self.piece_type)
 
         scored: list[tuple[float, Action]] = []
         dim = current_state.get_rep().get_dimensions()[0]
@@ -349,6 +350,19 @@ class MyPlayer(PlayerHex):
                 delta += my_before - my_after
             if opp_before < inf and opp_after < inf:
                 delta += opp_after - opp_before
+            # Bonus for merging our components without extra DFS.
+            pos = action.data["position"]
+            neighbor_comps = {
+                my_labels.get((ni, nj))
+                for _, (ni, nj) in current_state.get_neighbours(*pos).values()
+                if my_labels.get((ni, nj)) is not None
+            }
+            if neighbor_comps:
+                comps_after = my_components_before - (len(neighbor_comps) - 1)
+            else:
+                comps_after = my_components_before + 1
+            if comps_after < my_components_before:
+                delta += 1.0 * (my_components_before - comps_after)
 
             if early_game:
                 pos = action.data.get("position")
@@ -395,6 +409,7 @@ class MyPlayer(PlayerHex):
         env = current_state.get_rep().get_env()
         dim = current_state.get_rep().get_dimensions()[0]
         enemy_type = "R" if self.piece_type == "B" else "B"
+        my_labels, my_components_before = self._component_labels(current_state, self.piece_type)
         # Empty cells that would complete an enemy bridge if they play there.
         enemy_bridge_targets = set(self._bridge_defenses(current_state, enemy_type))
         # Empty cells that would block a future enemy bridge (both mids empty and target not blocked).
@@ -443,6 +458,18 @@ class MyPlayer(PlayerHex):
             # Discourage filling the gap of an already-formed enemy bridge.
             if pos in existing_enemy_bridge_cells:
                 score -= 5.0
+            # Bonus for merging our components using neighbor comp labels.
+            neighbor_comps = {
+                my_labels.get((ni, nj))
+                for _, (ni, nj) in current_state.get_neighbours(*pos).values()
+                if my_labels.get((ni, nj)) is not None
+            }
+            if neighbor_comps:
+                comps_after = my_components_before - (len(neighbor_comps) - 1)
+            else:
+                comps_after = my_components_before + 1
+            if comps_after < my_components_before:
+                score += 0.5 * (my_components_before - comps_after)
 
             scored.append((score, action))
 
@@ -452,6 +479,35 @@ class MyPlayer(PlayerHex):
 
     def _time_remaining(self, start_time: float, total_time: float) -> float:
         return total_time - (time.perf_counter() - start_time)
+
+    def _component_labels(self, state: GameState, piece_type: str) -> tuple[dict[tuple[int, int], int], int]:
+        """
+        Labels connected components of the given piece type.
+        Returns (position->component_id map, component_count).
+        """
+        env = state.get_rep().get_env()
+        labels: dict[tuple[int, int], int] = {}
+        comp_id = 0
+
+        def dfs(start):
+            stack = [start]
+            while stack:
+                node = stack.pop()
+                if node in labels:
+                    continue
+                labels[node] = comp_id
+                for _, (ni, nj) in state.get_neighbours(*node).values():
+                    npos = (ni, nj)
+                    piece = env.get(npos)
+                    if piece is not None and piece.get_type() == piece_type and npos not in labels:
+                        stack.append(npos)
+
+        for pos, piece in env.items():
+            if piece.get_type() != piece_type or pos in labels:
+                continue
+            dfs(pos)
+            comp_id += 1
+        return labels, comp_id
 
     # returns the tuple [my_id, opp_id]
     def _find_player_ids(self, state: GameState) -> tuple[int, int]:
