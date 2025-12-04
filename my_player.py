@@ -8,6 +8,7 @@ from seahorse.game.game_state import GameState
 from game_state_hex import GameStateHex
 from seahorse.utils.custom_exceptions import MethodNotImplementedError
 
+# ref: left: (0, -1), right (0, 1), up-left: (-1, 0), up-right: (-1, 1), down-left: (1, -1), down-right: (1, 0)
 BRIDGE_PATTERNS = [ # tuple -> (target coord), [coords of the two intermediate cells]
     ((-2, 1), [(-1, 0), (-1, 1)]), # up above : up left and up right 
     ((-1, -1), [(-1, 0), (0, -1)]), # upper left: up left and left
@@ -52,7 +53,7 @@ class MyPlayer(PlayerHex):
 
     def compute_action(self, current_state: GameState, remaining_time: int = 1e9, **kwargs) -> Action:
         """
-        Picks a action using minimax with alpha-beta pruning, with depth limiter right now.
+        Picks a action using minimax with alpha-beta pruning.
         Has a first move heuristic to take a center piece on the first move.
         """
         start_time = time.perf_counter()
@@ -102,6 +103,8 @@ class MyPlayer(PlayerHex):
         return action
 
     def maxAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float, start_time: float, total_time: float) -> tuple[float, Action | None]:
+        
+        #Evaluate if terminal or depth limit
         if self._time_remaining(start_time, total_time) <= THIRTY_SEC:
             return inf, None
         if depth <= 0 or current_state.is_done():
@@ -111,8 +114,10 @@ class MyPlayer(PlayerHex):
         if not actions:
             return self.evaluate_state(current_state), None
 
+        #Ordering of actions (light or heavy)
         ordered_actions = self._order_actions(current_state, actions, depth, clipping_depth)
 
+        #Rouler all actions
         best_value = -inf
         best_action = None
         for action in ordered_actions:
@@ -127,6 +132,8 @@ class MyPlayer(PlayerHex):
         return best_value, best_action
 
     def minAction(self, current_state: GameState, depth: int, clipping_depth: int, alpha: float, beta: float, start_time: float, total_time: float) -> tuple[float, Action | None]:
+        
+        #Evaluate if terminal or depth limit
         if self._time_remaining(start_time, total_time) <= THIRTY_SEC:
             return -inf, None
         if depth <= 0 or current_state.is_done():
@@ -136,8 +143,10 @@ class MyPlayer(PlayerHex):
         if not actions:
             return self.evaluate_state(current_state), None
 
+        #Order actions
         ordered_actions = self._order_actions(current_state, actions, depth, clipping_depth)
 
+        #Run all actions
         best_value = inf
         best_action = None
         for action in ordered_actions:
@@ -152,15 +161,20 @@ class MyPlayer(PlayerHex):
         return best_value, best_action
 
     def evaluate_state(self, state: GameState) -> float:
+        """
+        Gives a numerical evaluation of the state.
+        """
         my_id, opp_id = self._find_player_ids(state)
         if state.is_done():
             return 1e9 * (state.scores.get(my_id, 0.0) - state.scores.get(opp_id, 0.0))
 
+        #Do Dijkstra evaluations of shortest path heuristic
         my_cost = self._shortest_path_cost(state, my_id)
         opp_cost = self._shortest_path_cost(state, opp_id) if opp_id is not None else inf
 
         if my_cost == inf and opp_cost == inf:
             return 0.0
+
         # lower path cost is better; flip to a score where higher is better for us
         return opp_cost - my_cost
     
@@ -181,7 +195,7 @@ class MyPlayer(PlayerHex):
         block_cost = inf
 
         # precompute enemy bridge cells (empty cells that complete an opponent bridge).
-        # need to be computed because they are impassible
+        # need to be computed because they are considered impassible
         enemy_type = "R" if piece_type == "B" else "B"
         enemy_bridge_cells: set[tuple[int, int]] = set()
         for (i, j), piece in env.items():
@@ -200,7 +214,7 @@ class MyPlayer(PlayerHex):
                 if all(env.get(mid) is None for mid in mid_positions):
                     enemy_bridge_cells.update(mid_positions)
 
-        # Thois is to determine the cost of the cell during djikstra
+        # Determine the cost of the cell during djikstra
         def cell_cost(pos):
             piece = env.get(pos)
             if piece is None:
@@ -218,6 +232,7 @@ class MyPlayer(PlayerHex):
             starts = [(i, 0) for i in range(dim)]
             targets = {(i, dim - 1) for i in range(dim)}
 
+        #Setup priority queue (heap) of cells for dijkstra with a distance dictionnary
         dist: dict[tuple[int, int], float] = {}
         heap: list[tuple[float, tuple[int, int]]] = []
         for pos in starts:
@@ -227,6 +242,7 @@ class MyPlayer(PlayerHex):
             dist[pos] = cost
             heapq.heappush(heap, (cost, pos))
 
+        #Dijkstra
         while heap:
             d, pos = heapq.heappop(heap)
             if d != dist.get(pos, inf):
@@ -244,8 +260,7 @@ class MyPlayer(PlayerHex):
                     heapq.heappush(heap, (nd, npos))
 
             # Bridges: oXo pattern where it is technically unblockable
-            # Set to a low weight of 0.5 cause its not fully connected yet but better than empty cells
-            # ref: left: (0, -1), right (0, 1), up-left: (-1, 0), up-right: (-1, 1), down-left: (1, -1), down-right: (1, 0)
+            # Set to a low weight of 0.5 cause its not fully connected yet but better than regular empty cells
             piece_here = env.get(pos)
             if piece_here is not None and piece_here.get_type() == piece_type:
 
@@ -296,6 +311,7 @@ class MyPlayer(PlayerHex):
         my_id, opp_id = self._find_player_ids(state)
         best_score = -inf
         best_action = actions[0]
+        #Simples evaluations dijkstra du jeu resultant a un niveau, prise du meilleur
         for action in actions:
             child_state = state.apply_action(action)
             my_cost = self._shortest_path_cost(child_state, my_id)
@@ -311,7 +327,8 @@ class MyPlayer(PlayerHex):
 
     def _order_actions(self, current_state: GameState, actions: tuple[Action, ...], depth: int, heavy_ordering_depth: int) -> list[Action]:
         """
-        Orders actions by a heuristic score and injects bridge defenses into the shortlist.
+        Orders actions by a heuristic score and injects bridge defenses into the actions considered.
+        Bridge defense: a bridge pattern that is being attacked by the opponent and needs immediate action to avoid blocking
         """
         dim = current_state.get_rep().get_dimensions()[0]
         if (current_state.get_step()) < 8:
@@ -331,6 +348,10 @@ class MyPlayer(PlayerHex):
             return self._light_ordering(current_state, actions)
 
     def _heavy_ordering(self, current_state: GameState, actions: tuple[Action, ...]):
+        """
+        Orders actions by a heavy evaluation of all states resulting from the action.
+        Is very demanding for time, but efficient in ordering
+        """
         my_id, opp_id = self._find_player_ids(current_state)
         my_before = self._shortest_path_cost(current_state, my_id)
         opp_before = self._shortest_path_cost(current_state, opp_id) if opp_id is not None else inf
@@ -341,6 +362,7 @@ class MyPlayer(PlayerHex):
         center = (dim / 2.0 - 0.5, dim / 2.0 - 0.5)
         early_game = current_state.get_step() < 8
 
+        #Evaluate the state of each resulting board for an action just to order them
         for action in actions:
             child_state = current_state.apply_action(action)
             my_after = self._shortest_path_cost(child_state, my_id)
@@ -401,7 +423,9 @@ class MyPlayer(PlayerHex):
    
     def _light_ordering(self, current_state: GameState, actions: tuple[Action, ...]) -> list[Action]:
         """
-        Cheaper ordering: prioritize local connectivity and blocking potential enemy bridges.
+        Cheaper ordering: prioritize local connectivit and blocking potential enemy bridges.
+        No dijkstra evaluation for each avtion, just simple operations and a cheap DFS to see if were connecting two 
+        seperate chains
         """
         if not actions:
             return []
@@ -410,15 +434,20 @@ class MyPlayer(PlayerHex):
         dim = current_state.get_rep().get_dimensions()[0]
         enemy_type = "R" if self.piece_type == "B" else "B"
         my_labels, my_components_before = self._component_labels(current_state, self.piece_type)
+
         # Empty cells that would complete an enemy bridge if they play there.
         enemy_bridge_targets = set(self._bridge_defenses(current_state, enemy_type))
+
         # Empty cells that would block a future enemy bridge (both mids empty and target not blocked).
         potential_bridge_blocks: set[tuple[int, int]] = set()
+
         # Empty cells that would complete or support our bridge.
         my_bridge_targets = set(self._bridge_defenses(current_state, self.piece_type))
+
         # Empty cells that sit inside an already-formed enemy bridge (both ends enemy, mids empty).
         existing_enemy_bridge_cells: set[tuple[int, int]] = set()
 
+        #Find ennemies POTENTIAL BRIGES (bridge that can be formed by opp in one move) later favour blocking them from forming.
         for (i, j), piece in env.items():
             if piece.get_type() != enemy_type:
                 continue
@@ -482,7 +511,7 @@ class MyPlayer(PlayerHex):
 
     def _component_labels(self, state: GameState, piece_type: str) -> tuple[dict[tuple[int, int], int], int]:
         """
-        Labels connected components of the given piece type.
+        Labels connected components of the given piece type. E.g. chain 0, chain 1, ...
         Returns (position->component_id map, component_count).
         """
         env = state.get_rep().get_env()
